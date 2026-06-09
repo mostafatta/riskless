@@ -6,9 +6,7 @@ __pycache__/
 data/raw/
 data/processed/
 
-models/*.pkl
-models/*.keras
-models/*.h5
+
 
 .DS_Store
 Thumbs.db
