@@ -1081,14 +1081,16 @@ if analyze_button:
                 st.markdown(sector_cards_html, unsafe_allow_html=True)
 
         except Exception as e:
+            import traceback
+            full_traceback = traceback.format_exc().replace('<', '&lt;').replace('>', '&gt;')
+            
             progress_bar.empty()
             status_text.empty()
-            error_msg = str(e).replace('<', '&lt;').replace('>', '&gt;')
             st.markdown(
                 f'<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);'
-                f'border-radius:12px;padding:1.5rem;font-family:Inter,sans-serif;">'
+                f'border-radius:12px;padding:1.5rem;font-family:Inter,sans-serif;overflow-x:auto;">'
                 f'<div style="color:#f87171;font-weight:600;margin-bottom:.5rem;">&#10060; An Error Occurred</div>'
-                f'<div style="color:rgba(200,210,230,.6);font-size:.9rem;">{error_msg}</div>'
+                f'<pre style="color:rgba(200,210,230,.8);font-size:.8rem;white-space:pre-wrap;line-height:1.4;">{full_traceback}</pre>'
                 f'</div>',
                 unsafe_allow_html=True
             )
