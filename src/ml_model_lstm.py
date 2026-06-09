@@ -14,14 +14,15 @@ from sklearn.metrics import accuracy_score, classification_report, confusion_mat
 from sklearn.utils.class_weight import compute_class_weight
 import joblib
 
+# tensorflow-cpu compatible import block
 import tensorflow as tf
 tf.get_logger().setLevel('ERROR')
 logging.getLogger('tensorflow').setLevel(logging.ERROR)
 
-from tensorflow.keras.models import Sequential
-from tensorflow.keras.layers import Input, LSTM, Dense, Dropout
-from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau
-from tensorflow.keras.utils import to_categorical
+from tensorflow.keras.models import Sequential  # type: ignore
+from tensorflow.keras.layers import Input, LSTM, Dense, Dropout  # type: ignore
+from tensorflow.keras.callbacks import EarlyStopping, ReduceLROnPlateau  # type: ignore
+from tensorflow.keras.utils import to_categorical  # type: ignore
 
 # ==========================================
 # Feature Configuration
