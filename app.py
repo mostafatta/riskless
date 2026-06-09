@@ -182,8 +182,14 @@ def fetch_and_calculate(tickers_tuple, weights_tuple):
     os.makedirs(data_directory, exist_ok=True)
 
     loader = TadawulDataLoader(tickers=tickers, data_dir=data_directory)
-    loader.fetch_stock_data()
-    loader.fetch_market_data()
+    
+    # ── YFINANCE CLOUD FIX ───────────────────────────────────────
+    # Yahoo Finance blocks Streamlit Cloud IPs and returns empty data.
+    # If we call these fetch methods, they will overwrite your good 
+    # GitHub data with empty files, causing the ZeroDivisionError!
+    # loader.fetch_stock_data()
+    # loader.fetch_market_data()
+    # ─────────────────────────────────────────────────────────────
 
     meta_path = os.path.join(loader.data_dir, "stocks_metadata.csv")
     if not os.path.exists(meta_path):
@@ -191,10 +197,18 @@ def fetch_and_calculate(tickers_tuple, weights_tuple):
     meta_df = pd.read_csv(meta_path).set_index("Ticker")
 
     calc = RiskCalculator(data_dir=data_directory)
-    calc.load_data()
-    calc.calculate_daily_returns()
+    
+    try:
+        calc.load_data()
+        calc.calculate_daily_returns()
+        metrics = calc.calculate_portfolio_risk(weights)
+    except ZeroDivisionError:
+        raise ValueError(
+            "Missing or empty data for one of the tickers. "
+            "Because Yahoo Finance blocks Streamlit Cloud, you must first run this app "
+            "locally on your computer to download new stock data, then push the new CSV files to GitHub!"
+        )
 
-    metrics = calc.calculate_portfolio_risk(weights)
     vol     = metrics['Portfolio_Volatility_Percentage']
     beta    = metrics['Portfolio_Beta']
 
