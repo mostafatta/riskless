@@ -1,0 +1,14 @@
+TADAWUL RISK MODEL RESULTS
+==========================
+Accuracy: 96.00%
+
+Detailed Classification Report:
+              precision    recall  f1-score   support
+
+   High Risk       1.00      0.93      0.96        14
+    Low Risk       1.00      0.60      0.75         5
+ Medium Risk       0.95      1.00      0.97        56
+
+    accuracy                           0.96        75
+   macro avg       0.98      0.84      0.90        75
+weighted avg       0.96      0.96      0.96        75
