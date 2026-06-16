@@ -59,49 +59,100 @@ class TadawulDataLoader:
     # Original methods (unchanged)
     # ──────────────────────────────────────────────────────────
 
+    @staticmethod
+    def _make_session():
+        """
+        Create a requests session with browser-like headers.
+        This avoids Yahoo Finance 401/empty-response errors on
+        cloud servers (Streamlit Cloud, Heroku, etc.) that get
+        blocked by Yahoo's bot-detection when using the default
+        urllib user-agent.
+        """
+        import requests
+        session = requests.Session()
+        session.headers.update({
+            "User-Agent": (
+                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                "AppleWebKit/537.36 (KHTML, like Gecko) "
+                "Chrome/124.0.0.0 Safari/537.36"
+            ),
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        })
+        return session
+
+    def _download_with_retry(self, symbols, label, max_retries=3, delay=2):
+        """
+        Download price data for `symbols` with retry + session fallback.
+        Returns a DataFrame on success, None on failure.
+        """
+        import time as _time
+
+        if isinstance(symbols, str):
+            symbols = [symbols]
+
+        for attempt in range(1, max_retries + 1):
+            try:
+                session = self._make_session()
+                raw = yf.download(
+                    symbols,
+                    start=self.start_date,
+                    end=self.end_date,
+                    auto_adjust=True,      # auto_adjust=True avoids Adj Close lookup issues
+                    progress=False,
+                    session=session,
+                    threads=False,
+                )
+                # With auto_adjust=True, column is 'Close' not 'Adj Close'
+                if isinstance(raw.columns, pd.MultiIndex):
+                    data = raw['Close']
+                else:
+                    data = raw[['Close']] if 'Close' in raw.columns else raw
+
+                if isinstance(data, pd.Series):
+                    data = data.to_frame()
+
+                if data.empty or data.isna().all().all():
+                    raise ValueError(f"Empty data returned for {symbols}")
+
+                print(f"  {label}: downloaded {len(data)} rows × {len(data.columns)} cols")
+                return data
+
+            except Exception as e:
+                print(f"  [WARN] {label} attempt {attempt}/{max_retries} failed: {e}")
+                if attempt < max_retries:
+                    _time.sleep(delay * attempt)
+
+        print(f"  [ERROR] {label}: all {max_retries} attempts failed")
+        return None
+
     def fetch_stock_data(self):
-        """Download stock prices from Yahoo Finance."""
+        """Download stock prices from Yahoo Finance with retry logic."""
         print(f"Fetching data for {len(self.tickers)} stocks...")
-        try:
-            data = yf.download(
-                self.tickers,
-                start=self.start_date,
-                end=self.end_date,
-                auto_adjust=False,
-                progress=False
-            )['Adj Close']
-
-            if isinstance(data, pd.Series):
-                data = data.to_frame()
-
-            file_path = os.path.join(self.data_dir, "stocks_prices.csv")
-            data.to_csv(file_path)
-            print(f"  Stock prices saved to {file_path}")
-            return data
-        except Exception as e:
-            print(f"  Error downloading stocks: {e}")
+        data = self._download_with_retry(self.tickers, "stocks")
+        if data is None:
             return None
+        file_path = os.path.join(self.data_dir, "stocks_prices.csv")
+        data.to_csv(file_path)
+        print(f"  Stock prices saved to {file_path}")
+        return data
 
     def fetch_market_data(self):
-        """Download TASI market index from Yahoo Finance."""
+        """Download TASI market index from Yahoo Finance with retry logic."""
         print(f"Fetching Market Index ({self.market_ticker})...")
-        try:
-            market_data = yf.download(
-                self.market_ticker,
-                start=self.start_date,
-                end=self.end_date,
-                auto_adjust=False,
-                progress=False
-            )['Adj Close']
-
-            market_data.name = "TASI_Index"
-            file_path = os.path.join(self.data_dir, "market_prices.csv")
-            market_data.to_csv(file_path)
-            print(f"  Market data saved to {file_path}")
-            return market_data
-        except Exception as e:
-            print(f"  Error downloading market data: {e}")
+        data = self._download_with_retry(self.market_ticker, "TASI")
+        if data is None:
             return None
+        # Flatten to single Series named TASI_Index
+        if isinstance(data, pd.DataFrame):
+            market_series = data.iloc[:, 0]
+        else:
+            market_series = data
+        market_series.name = "TASI_Index"
+        file_path = os.path.join(self.data_dir, "market_prices.csv")
+        market_series.to_csv(file_path)
+        print(f"  Market data saved to {file_path}")
+        return market_series
 
     # ──────────────────────────────────────────────────────────
     # Updated fetch_metadata — adds 5 new fundamental columns
