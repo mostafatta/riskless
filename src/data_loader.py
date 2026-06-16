@@ -93,14 +93,12 @@ class TadawulDataLoader:
 
         for attempt in range(1, max_retries + 1):
             try:
-                session = self._make_session()
                 raw = yf.download(
                     symbols,
                     start=self.start_date,
                     end=self.end_date,
                     auto_adjust=True,      # auto_adjust=True avoids Adj Close lookup issues
                     progress=False,
-                    session=session,
                     threads=False,
                 )
                 # With auto_adjust=True, column is 'Close' not 'Adj Close'
