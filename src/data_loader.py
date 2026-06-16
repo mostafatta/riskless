@@ -62,24 +62,26 @@ class TadawulDataLoader:
     @staticmethod
     def _make_session():
         """
-        Create a requests session with browser-like headers.
-        This avoids Yahoo Finance 401/empty-response errors on
+        Create a curl_cffi session with browser-like headers.
+        This avoids Yahoo Finance 401/429 empty-response errors on
         cloud servers (Streamlit Cloud, Heroku, etc.) that get
-        blocked by Yahoo's bot-detection when using the default
-        urllib user-agent.
+        blocked by Yahoo's bot-detection.
         """
-        import requests
-        session = requests.Session()
-        session.headers.update({
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/124.0.0.0 Safari/537.36"
-            ),
-            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-            "Accept-Language": "en-US,en;q=0.5",
-        })
-        return session
+        try:
+            from curl_cffi import requests
+            session = requests.Session(impersonate="chrome")
+            return session
+        except ImportError:
+            import requests
+            session = requests.Session()
+            session.headers.update({
+                "User-Agent": (
+                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                    "AppleWebKit/537.36 (KHTML, like Gecko) "
+                    "Chrome/124.0.0.0 Safari/537.36"
+                )
+            })
+            return session
 
     def _download_with_retry(self, symbols, label, max_retries=3, delay=2):
         """
@@ -93,6 +95,7 @@ class TadawulDataLoader:
 
         for attempt in range(1, max_retries + 1):
             try:
+                session = self._make_session()
                 raw = yf.download(
                     symbols,
                     start=self.start_date,
@@ -100,6 +103,7 @@ class TadawulDataLoader:
                     auto_adjust=True,      # auto_adjust=True avoids Adj Close lookup issues
                     progress=False,
                     threads=False,
+                    session=session,
                 )
                 # With auto_adjust=True, column is 'Close' not 'Adj Close'
                 if isinstance(raw.columns, pd.MultiIndex):
@@ -191,7 +195,8 @@ class TadawulDataLoader:
             }
 
             try:
-                stock = yf.Ticker(t)
+                session = self._make_session()
+                stock = yf.Ticker(t, session=session)
                 info  = stock.info
 
                 # ── Market Cap Score (original logic) ─────
