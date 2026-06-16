@@ -28,10 +28,9 @@ for _p in [BASE_DIR, SRC_DIR]:
         sys.path.insert(0, _p)
 
 try:
-    # Direct imports (no 'src.' prefix) — works whether src/ has __init__.py or not
-    from data_loader  import TadawulDataLoader
-    from calculations import RiskCalculator
-    from risk_labeler import RiskLabeler
+    from src.data_loader  import TadawulDataLoader
+    from src.calculations import RiskCalculator
+    from src.risk_labeler import RiskLabeler
 except ModuleNotFoundError as _e:
     st.error(f"⚠️ Could not import src modules: {_e}. Make sure app.py is next to the src/ folder.")
     st.stop()
