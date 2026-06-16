@@ -1,11 +1,15 @@
+# Python
 __pycache__/
 *.pyc
 .venv/
 *.egg-info/
 
+# Keep data/processed/ out (large generated training CSVs)
+data/processed/
 
+# data/raw/ CSVs must be committed so Streamlit Cloud can read them.
+# Do NOT add data/raw/ here.
 
-
-
+# OS
 .DS_Store
 Thumbs.db
