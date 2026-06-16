@@ -18,14 +18,21 @@ except ImportError:
 
 # === Fix Paths ===
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
-sys.path.append(os.path.join(BASE_DIR, 'src'))
+SRC_DIR  = os.path.join(BASE_DIR, 'src')
+
+# Add both BASE_DIR and SRC_DIR to sys.path so imports work on
+# Streamlit Cloud (/mount/src/riskless/) and locally alike.
+for _p in [BASE_DIR, SRC_DIR]:
+    if _p not in sys.path:
+        sys.path.insert(0, _p)
 
 try:
-    from src.data_loader  import TadawulDataLoader
-    from src.calculations import RiskCalculator
-    from src.risk_labeler import RiskLabeler
-except ModuleNotFoundError:
-    st.error("⚠️ Error: 'src' folder not found. Make sure app.py is next to the src folder.")
+    # Direct imports (no 'src.' prefix) — works whether src/ has __init__.py or not
+    from data_loader  import TadawulDataLoader
+    from calculations import RiskCalculator
+    from risk_labeler import RiskLabeler
+except ModuleNotFoundError as _e:
+    st.error(f"⚠️ Could not import src modules: {_e}. Make sure app.py is next to the src/ folder.")
     st.stop()
 
 # === UI Configuration ===
@@ -212,14 +219,15 @@ def fetch_and_calculate(tickers_tuple, weights_tuple):
     if not os.path.exists(meta_path):
         loader.fetch_metadata()
 
-    # Guard: if download failed (e.g. geo-blocked), raise a clear message
+    # Guard: if download failed, raise a user-friendly message
     for csv_path, label in [(stocks_csv, "stocks_prices.csv"),
                              (market_csv, "market_prices.csv")]:
         if not os.path.exists(csv_path) or os.path.getsize(csv_path) < 50:
             raise ConnectionError(
-                f"Could not download market data ({label}). "
-                f"Yahoo Finance may be temporarily unavailable. "
-                f"Please try again in a few seconds."
+                f"Could not fetch data for {', '.join(tickers)} from Yahoo Finance. "
+                f"This sometimes happens on cloud servers. "
+                f"Please wait 10 seconds and click Analyze again — "
+                f"the data will be cached after the first successful download."
             )
 
     meta_df = pd.read_csv(meta_path).set_index("Ticker")
