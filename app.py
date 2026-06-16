@@ -190,16 +190,21 @@ def fetch_and_calculate(tickers_tuple, weights_tuple):
     tickers = list(tickers_tuple)
     weights = list(weights_tuple)
 
-    data_directory = os.path.join(BASE_DIR, 'data', 'raw')
+    # ── Use a per-portfolio temp directory so each ticker combination
+    #    gets its own isolated CSV files — no stale data from other runs.
+    safe_key       = "_".join(sorted(tickers))
+    data_directory = os.path.join(BASE_DIR, 'data', 'live', safe_key)
     os.makedirs(data_directory, exist_ok=True)
 
     stocks_csv = os.path.join(data_directory, "stocks_prices.csv")
     market_csv = os.path.join(data_directory, "market_prices.csv")
     meta_path  = os.path.join(data_directory, "stocks_metadata.csv")
 
-    loader = TadawulDataLoader(data_dir=data_directory)
+    # Download only the user-selected tickers (not the full 20-ticker universe)
+    # This avoids geo-blocking issues on Streamlit Cloud for unused tickers
+    # and removes the universe size mismatch error entirely.
+    loader = TadawulDataLoader(tickers=tickers, data_dir=data_directory)
 
-    # Only download if CSVs are missing (cloud reads bundled files; local re-downloads)
     if not os.path.exists(stocks_csv):
         loader.fetch_stock_data()
     if not os.path.exists(market_csv):
@@ -207,45 +212,30 @@ def fetch_and_calculate(tickers_tuple, weights_tuple):
     if not os.path.exists(meta_path):
         loader.fetch_metadata()
 
-    # Validate CSVs are not empty after attempted download
+    # Guard: if download failed (e.g. geo-blocked), raise a clear message
     for csv_path, label in [(stocks_csv, "stocks_prices.csv"),
                              (market_csv, "market_prices.csv")]:
-        if not os.path.exists(csv_path):
-            raise FileNotFoundError(
-                f"{label} not found. Please run data_generator.py locally "
-                f"and commit the data/raw/ folder to your repository."
-            )
-        if os.path.getsize(csv_path) < 100:
-            raise ValueError(
-                f"{label} appears empty — Yahoo Finance download failed "
-                f"(possibly geo-blocked on Streamlit Cloud). "
-                f"Run data_generator.py locally and commit data/raw/ to GitHub."
+        if not os.path.exists(csv_path) or os.path.getsize(csv_path) < 50:
+            raise ConnectionError(
+                f"Could not download market data ({label}). "
+                f"Yahoo Finance may be temporarily unavailable. "
+                f"Please try again in a few seconds."
             )
 
     meta_df = pd.read_csv(meta_path).set_index("Ticker")
 
+    # RiskCalculator now loads only the selected tickers' prices —
+    # weights vector length matches exactly (no universe alignment needed)
     calc = RiskCalculator(data_dir=data_directory)
     calc.load_data()
     calc.calculate_daily_returns()
 
-    # Build full_weights: align user weights to the full universe ticker list.
-    # Tickers not selected by the user get weight 0.0.
-    unknown_tickers = [t for t in tickers if t not in calc.tickers]
-    if unknown_tickers:
-        raise ValueError(
-            f"Ticker(s) not in the supported Tadawul universe: {', '.join(unknown_tickers)}. "
-            f"Supported tickers: {', '.join(calc.tickers)}"
-        )
-
-    full_weights = [0.0] * len(calc.tickers)
-    for t, w in zip(tickers, weights):
-        full_weights[calc.tickers.index(t)] = w
-
-    metrics = calc.calculate_portfolio_risk(full_weights)
+    # weights aligns 1-to-1 with tickers — no full_weights padding needed
+    # because calc.tickers == the user's selected tickers
+    metrics = calc.calculate_portfolio_risk(weights)
     vol     = metrics['Portfolio_Volatility_Percentage']
     beta    = metrics['Portfolio_Beta']
 
-    # Diversification index uses only the selected weights (not the padded zeros)
     div_index = 1.0 - np.sum(np.array(weights) ** 2)
 
     portfolio_sectors = {}
@@ -264,18 +254,17 @@ def fetch_and_calculate(tickers_tuple, weights_tuple):
 
     for sec, sec_weight in portfolio_sectors.items():
         sec_tickers = [tk for tk, s in loader.sector_map.items() if s == sec]
-        s_vol, s_beta = calc.calculate_sector_metrics(sec_tickers)
+        # Filter to only tickers present in calc (the user's selection)
+        sec_tickers_available = [tk for tk in sec_tickers if tk in calc.tickers]
+        if sec_tickers_available:
+            s_vol, s_beta = calc.calculate_sector_metrics(sec_tickers_available)
+        else:
+            s_vol, s_beta = 0.15, 1.0
         weighted_sector_vol  += sec_weight * s_vol
         weighted_sector_beta += sec_weight * s_beta
 
-    # ── New portfolio-level features (aggregated from stock level) ──
-    # These are computed using portfolio-weight aggregation where possible,
-    # or derived from available per-ticker data via RiskCalculator / metadata.
-    # Falls back to NaN if not computed by the calculator — imputed later.
-
     new_feature_dict = {}
 
-    # Technical: weighted average across stocks
     new_feature_dict['Portfolio_Downside_Volatility'] = _weighted_stock_metric(
         calc, tickers, weights, 'Downside_Volatility'
     )
@@ -286,7 +275,6 @@ def fetch_and_calculate(tickers_tuple, weights_tuple):
         calc, tickers, weights, 'Amihud_Illiquidity'
     )
 
-    # Financial: from metadata (fundamentals already stored per ticker)
     new_feature_dict['Portfolio_Debt_to_Equity'] = _weighted_meta_metric(
         meta_df, tickers, weights, 'Debt_to_Equity'
     )
