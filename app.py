@@ -13,7 +13,8 @@ try:
     import tensorflow as tf
     tf.get_logger().setLevel('ERROR')
     TF_AVAILABLE = True
-except ImportError:
+except Exception as e:
+    print(f"TensorFlow could not be loaded: {e}")
     TF_AVAILABLE = False
 
 # === Fix Paths ===
