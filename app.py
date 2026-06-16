@@ -193,16 +193,35 @@ def fetch_and_calculate(tickers_tuple, weights_tuple):
     data_directory = os.path.join(BASE_DIR, 'data', 'raw')
     os.makedirs(data_directory, exist_ok=True)
 
-    # Load full universe — TadawulDataLoader with no tickers arg uses all 20
-    # This ensures stock_prices.csv covers the complete covariance matrix,
-    # and calculate_portfolio_risk receives a weight vector of the correct length.
-    loader = TadawulDataLoader(data_dir=data_directory)
-    loader.fetch_stock_data()
-    loader.fetch_market_data()
+    stocks_csv = os.path.join(data_directory, "stocks_prices.csv")
+    market_csv = os.path.join(data_directory, "market_prices.csv")
+    meta_path  = os.path.join(data_directory, "stocks_metadata.csv")
 
-    meta_path = os.path.join(loader.data_dir, "stocks_metadata.csv")
+    loader = TadawulDataLoader(data_dir=data_directory)
+
+    # Only download if CSVs are missing (cloud reads bundled files; local re-downloads)
+    if not os.path.exists(stocks_csv):
+        loader.fetch_stock_data()
+    if not os.path.exists(market_csv):
+        loader.fetch_market_data()
     if not os.path.exists(meta_path):
         loader.fetch_metadata()
+
+    # Validate CSVs are not empty after attempted download
+    for csv_path, label in [(stocks_csv, "stocks_prices.csv"),
+                             (market_csv, "market_prices.csv")]:
+        if not os.path.exists(csv_path):
+            raise FileNotFoundError(
+                f"{label} not found. Please run data_generator.py locally "
+                f"and commit the data/raw/ folder to your repository."
+            )
+        if os.path.getsize(csv_path) < 100:
+            raise ValueError(
+                f"{label} appears empty — Yahoo Finance download failed "
+                f"(possibly geo-blocked on Streamlit Cloud). "
+                f"Run data_generator.py locally and commit data/raw/ to GitHub."
+            )
+
     meta_df = pd.read_csv(meta_path).set_index("Ticker")
 
     calc = RiskCalculator(data_dir=data_directory)
