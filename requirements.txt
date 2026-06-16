@@ -5,3 +5,4 @@ scikit-learn==1.5.2
 joblib==1.4.2
 imbalanced-learn==0.12.4
 streamlit>=1.35.0
+requests>=2.31.0
