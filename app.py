@@ -6,6 +6,16 @@ import sys
 import joblib
 import time
 
+# TensorFlow is optional — only required for the LSTM model.
+# On environments where TF is not installed (e.g. Streamlit Cloud free tier),
+# RF and SVM still work normally; LSTM shows a clear unavailable message.
+try:
+    import tensorflow as tf
+    tf.get_logger().setLevel('ERROR')
+    TF_AVAILABLE = True
+except ImportError:
+    TF_AVAILABLE = False
+
 # === Fix Paths ===
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 sys.path.append(os.path.join(BASE_DIR, 'src'))
@@ -136,6 +146,8 @@ def load_model_artifacts(model_name: str):
 
     # ── Model ──────────────────────────────────────────────
     if info["type"] == "lstm":
+        if not TF_AVAILABLE:
+            return None, None, None, None   # signal: TF not installed
         import tensorflow as tf
         model = tf.keras.models.load_model(model_path)
     else:
@@ -181,15 +193,12 @@ def fetch_and_calculate(tickers_tuple, weights_tuple):
     data_directory = os.path.join(BASE_DIR, 'data', 'raw')
     os.makedirs(data_directory, exist_ok=True)
 
-    loader = TadawulDataLoader(tickers=tickers, data_dir=data_directory)
-    
-    # ── YFINANCE CLOUD FIX ───────────────────────────────────────
-    # Yahoo Finance blocks Streamlit Cloud IPs and returns empty data.
-    # If we call these fetch methods, they will overwrite your good 
-    # GitHub data with empty files, causing the ZeroDivisionError!
-    # loader.fetch_stock_data()
-    # loader.fetch_market_data()
-    # ─────────────────────────────────────────────────────────────
+    # Load full universe — TadawulDataLoader with no tickers arg uses all 20
+    # This ensures stock_prices.csv covers the complete covariance matrix,
+    # and calculate_portfolio_risk receives a weight vector of the correct length.
+    loader = TadawulDataLoader(data_dir=data_directory)
+    loader.fetch_stock_data()
+    loader.fetch_market_data()
 
     meta_path = os.path.join(loader.data_dir, "stocks_metadata.csv")
     if not os.path.exists(meta_path):
@@ -197,21 +206,27 @@ def fetch_and_calculate(tickers_tuple, weights_tuple):
     meta_df = pd.read_csv(meta_path).set_index("Ticker")
 
     calc = RiskCalculator(data_dir=data_directory)
-    
-    try:
-        calc.load_data()
-        calc.calculate_daily_returns()
-        metrics = calc.calculate_portfolio_risk(weights)
-    except ZeroDivisionError:
+    calc.load_data()
+    calc.calculate_daily_returns()
+
+    # Build full_weights: align user weights to the full universe ticker list.
+    # Tickers not selected by the user get weight 0.0.
+    unknown_tickers = [t for t in tickers if t not in calc.tickers]
+    if unknown_tickers:
         raise ValueError(
-            "Missing or empty data for one of the tickers. "
-            "Because Yahoo Finance blocks Streamlit Cloud, you must first run this app "
-            "locally on your computer to download new stock data, then push the new CSV files to GitHub!"
+            f"Ticker(s) not in the supported Tadawul universe: {', '.join(unknown_tickers)}. "
+            f"Supported tickers: {', '.join(calc.tickers)}"
         )
 
+    full_weights = [0.0] * len(calc.tickers)
+    for t, w in zip(tickers, weights):
+        full_weights[calc.tickers.index(t)] = w
+
+    metrics = calc.calculate_portfolio_risk(full_weights)
     vol     = metrics['Portfolio_Volatility_Percentage']
     beta    = metrics['Portfolio_Beta']
 
+    # Diversification index uses only the selected weights (not the padded zeros)
     div_index = 1.0 - np.sum(np.array(weights) ** 2)
 
     portfolio_sectors = {}
@@ -387,7 +402,8 @@ def ai_predict(model_name, model, scaler, encoder, features_to_use, results):
             prob_dict = {}
 
     elif mtype == "lstm":
-        import tensorflow as tf
+        if not TF_AVAILABLE:
+            return "Unavailable", {}
         X_scaled = scaler.transform(X_raw) if scaler else X_raw
         X_3d     = X_scaled.reshape(1, 1, X_scaled.shape[1])
         probs    = model.predict(X_3d, verbose=0)[0]
@@ -708,10 +724,34 @@ st.markdown(
 
 # Preload selected model silently
 model, scaler, encoder, features_to_use = load_model_artifacts(selected_model)
-if model is None:
+if info["type"] == "lstm" and not TF_AVAILABLE:
     st.warning(
-        f"⚠️ **{selected_model}** model file not found (`models/{info['model']}`). "
-        f"Run `ml_model_{info['type']}.py` first to train it."
+        "⚠️ LSTM is not available on this deployment — TensorFlow is not installed. "
+        "Select **Random Forest** or **SVM** instead. "
+        "To use LSTM, run the app locally with `tensorflow-cpu` installed."
+    )
+elif model is None:
+    st.markdown(
+        '<div style="background:rgba(234,179,8,.08);border:1px solid rgba(234,179,8,.3);' +
+        'border-radius:14px;padding:1.4rem 1.6rem;margin-bottom:1rem;">' +
+        '<div style="font-family:Inter,sans-serif;color:#facc15;font-weight:700;font-size:1rem;margin-bottom:.8rem;">' +
+        '&#9888; Models not found — follow these steps to get started' +
+        '</div>' +
+        '<div style="font-family:Inter,sans-serif;color:rgba(200,210,230,.75);font-size:.88rem;line-height:2;">' +
+        '<b style="color:#e2e8f0;">Step 1</b> &nbsp; Train the models locally:' +
+        '<br><code style="background:rgba(0,0,0,.3);padding:3px 8px;border-radius:5px;font-size:.82rem;">' +
+        'cd src &nbsp;&&nbsp; python data_generator.py' +
+        '</code>' +
+        '<br><code style="background:rgba(0,0,0,.3);padding:3px 8px;border-radius:5px;font-size:.82rem;">' +
+        'python ml_model_rf.py &nbsp;&&nbsp; python ml_model_svm.py' +
+        '</code>' +
+        '<br><br><b style="color:#e2e8f0;">Step 2</b> &nbsp; Commit the generated model files:' +
+        '<br><code style="background:rgba(0,0,0,.3);padding:3px 8px;border-radius:5px;font-size:.82rem;">' +
+        'git add models/ &nbsp;&&nbsp; git commit -m \"add trained models\" &nbsp;&&nbsp; git push' +
+        '</code>' +
+        '<br><br><b style="color:#e2e8f0;">Step 3</b> &nbsp; Streamlit Cloud will redeploy automatically.' +
+        '</div></div>',
+        unsafe_allow_html=True
     )
 
 
@@ -844,8 +884,24 @@ if analyze_button:
         st.error("⚠️ Total weights must equal 100%!")
     elif len(tickers) == 0:
         st.error("⚠️ Please enter at least one stock.")
+    elif info["type"] == "lstm" and not TF_AVAILABLE:
+        st.error(
+            "⚠️ LSTM requires TensorFlow which is not available on this deployment. "
+            "Please select **Random Forest** or **SVM**."
+        )
     elif model is None:
-        st.error(f"⚠️ Please train the {selected_model} model first.")
+        st.markdown(
+            '<div style="background:rgba(234,179,8,.08);border:1px solid rgba(234,179,8,.3);' +
+            'border-radius:14px;padding:1.2rem 1.4rem;">' +
+            '<div style="font-family:Inter,sans-serif;color:#facc15;font-weight:700;margin-bottom:.5rem;">' +
+            '&#9888; Model not trained yet' +
+            '</div>' +
+            '<div style="font-family:Inter,sans-serif;color:rgba(200,210,230,.7);font-size:.85rem;line-height:1.9;">' +
+            f'Run <code>src/ml_model_{info["type"]}.py</code> locally, then ' +
+            'commit the <code>models/</code> folder and push to GitHub.' +
+            '</div></div>',
+            unsafe_allow_html=True
+        )
     else:
         start_time   = time.time()
         progress_bar = st.progress(0)
@@ -1095,16 +1151,14 @@ if analyze_button:
                 st.markdown(sector_cards_html, unsafe_allow_html=True)
 
         except Exception as e:
-            import traceback
-            full_traceback = traceback.format_exc().replace('<', '&lt;').replace('>', '&gt;')
-            
             progress_bar.empty()
             status_text.empty()
+            error_msg = str(e).replace('<', '&lt;').replace('>', '&gt;')
             st.markdown(
                 f'<div style="background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.3);'
-                f'border-radius:12px;padding:1.5rem;font-family:Inter,sans-serif;overflow-x:auto;">'
+                f'border-radius:12px;padding:1.5rem;font-family:Inter,sans-serif;">'
                 f'<div style="color:#f87171;font-weight:600;margin-bottom:.5rem;">&#10060; An Error Occurred</div>'
-                f'<pre style="color:rgba(200,210,230,.8);font-size:.8rem;white-space:pre-wrap;line-height:1.4;">{full_traceback}</pre>'
+                f'<div style="color:rgba(200,210,230,.6);font-size:.9rem;">{error_msg}</div>'
                 f'</div>',
                 unsafe_allow_html=True
             )
