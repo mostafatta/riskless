@@ -27,6 +27,7 @@ MODELS = {
         "model"   : "rf_rolling_window.pkl",
         "scaler"  : None,
         "encoder" : None,
+        "features": "rf_features.pkl",
     },
     "2": {
         "name"    : "LSTM           (Rolling Window)",
@@ -34,6 +35,7 @@ MODELS = {
         "model"   : "lstm_rolling_window.keras",
         "scaler"  : "lstm_scaler.pkl",
         "encoder" : "lstm_label_encoder.pkl",
+        "features": "lstm_features.pkl",
     },
     "3": {
         "name"    : "SVM            (Rolling Window)",
@@ -41,6 +43,7 @@ MODELS = {
         "model"   : "svm_rolling_window.pkl",
         "scaler"  : "svm_scaler.pkl",
         "encoder" : "svm_label_encoder.pkl",
+        "features": "svm_features.pkl",
     },
 }
 
@@ -110,24 +113,25 @@ def load_model_artifacts(model_info):
         else:
             print(f"  [Warning] LabelEncoder not found: {encoder_path}")
 
-    return model, scaler, encoder
+    features = []
+    if "features" in model_info and model_info["features"]:
+        feat_path = os.path.join(models_dir, model_info["features"])
+        if os.path.exists(feat_path):
+            features = joblib.load(feat_path)
+
+    return model, scaler, encoder, features
 
 
 # ══════════════════════════════════════════════
 #  PREDICTION LOGIC
 # ══════════════════════════════════════════════
-def predict_with_model(model, scaler, encoder, model_info, feature_values):
+def predict_with_model(model, scaler, encoder, model_info, feature_values, feature_cols):
     """
     يُنفّذ التنبؤ بناءً على نوع المودل ويرجع:
     (ai_category, prob_str)
     """
     mtype = model_info["type"]
 
-    feature_cols = [
-        'Portfolio_Volatility', 'Portfolio_Beta',
-        'Sector_Volatility',    'Sector_Beta',
-        'Diversification_Index','Market_Cap_Score',
-    ]
     input_df = pd.DataFrame([feature_values], columns=feature_cols)
     X_raw    = input_df.values
 
@@ -222,7 +226,7 @@ def get_user_portfolio():
 # ══════════════════════════════════════════════
 #  MAIN PROCESS
 # ══════════════════════════════════════════════
-def process_prediction(tickers, weights, model, scaler, encoder, model_info):
+def process_prediction(tickers, weights, model, scaler, encoder, features_to_use, model_info):
     """Run calculations and AI prediction, then display results."""
     print(f"\n{'─'*45}")
     print("  PROCESSING... PLEASE WAIT")
@@ -282,13 +286,78 @@ def process_prediction(tickers, weights, model, scaler, encoder, model_info):
         )
 
         # ── AI Prediction ──────────────────────
-        feature_values = [
-            vol, beta,
-            weighted_sector_vol * 100, weighted_sector_beta,
-            div_index, port_cap_score,
+        technical_metrics = calc.get_portfolio_technical_metrics(tickers, weights)
+        port_downside_vol = technical_metrics.get('Portfolio_Downside_Volatility', 0.5)
+        port_max_drawdown = technical_metrics.get('Portfolio_Max_Drawdown', 0.5)
+        port_amihud = technical_metrics.get('Portfolio_Amihud_Illiquidity', 0.5)
+
+        port_debt_to_equity = 0.0
+        port_revenue_growth_vol = 0.0
+        port_current_ratio = 0.0
+        port_interest_coverage = 0.0
+        port_roa = 0.0
+        total_w = sum(weights)
+
+        for t, w in zip(tickers, weights):
+            if t in meta_df.index:
+                def get_val(col, default=0.5):
+                    v = meta_df.loc[t, col]
+                    try:
+                        v_float = float(v)
+                        return v_float if not np.isnan(v_float) else default
+                    except (Exception):
+                        return default
+
+                port_debt_to_equity += w * get_val("Debt_to_Equity", 0.5)
+                port_revenue_growth_vol += w * get_val("Revenue_Growth_Vol", 0.05)
+                port_current_ratio += w * get_val("Current_Ratio", 1.5)
+                port_interest_coverage += w * get_val("Interest_Coverage", 5.0)
+                port_roa += w * get_val("ROA", 0.05)
+            else:
+                port_debt_to_equity += w * 0.5
+                port_revenue_growth_vol += w * 0.05
+                port_current_ratio += w * 1.5
+                port_interest_coverage += w * 5.0
+                port_roa += w * 0.05
+
+        if total_w > 0:
+            port_debt_to_equity /= total_w
+            port_revenue_growth_vol /= total_w
+            port_current_ratio /= total_w
+            port_interest_coverage /= total_w
+            port_roa /= total_w
+
+        base_values = {
+            'Portfolio_Volatility': vol,
+            'Portfolio_Beta': beta,
+            'Sector_Volatility': weighted_sector_vol * 100,
+            'Sector_Beta': weighted_sector_beta,
+            'Diversification_Index': div_index,
+            'Market_Cap_Score': port_cap_score,
+            'Portfolio_Downside_Volatility': port_downside_vol,
+            'Portfolio_Max_Drawdown': port_max_drawdown,
+            'Portfolio_Amihud_Illiquidity': port_amihud,
+            'Portfolio_Debt_to_Equity': port_debt_to_equity,
+            'Portfolio_Revenue_Growth_Vol': port_revenue_growth_vol,
+            'Portfolio_Current_Ratio': port_current_ratio,
+            'Portfolio_Interest_Coverage': port_interest_coverage,
+            'Portfolio_ROA': port_roa,
+        }
+
+        ALL_FEATURES = [
+            'Portfolio_Volatility', 'Portfolio_Beta',
+            'Sector_Volatility', 'Sector_Beta',
+            'Diversification_Index', 'Market_Cap_Score',
+            'Portfolio_Downside_Volatility', 'Portfolio_Max_Drawdown',
+            'Portfolio_Amihud_Illiquidity', 'Portfolio_Debt_to_Equity',
+            'Portfolio_Revenue_Growth_Vol', 'Portfolio_Current_Ratio',
+            'Portfolio_Interest_Coverage', 'Portfolio_ROA'
         ]
+        feat_list = features_to_use if features_to_use and len(features_to_use) > 0 else ALL_FEATURES
+        feature_values = [base_values.get(f, 0.5) for f in feat_list]
+
         ai_category, prob_str = predict_with_model(
-            model, scaler, encoder, model_info, feature_values
+            model, scaler, encoder, model_info, feature_values, feat_list
         )
 
         # ── Display Results ────────────────────
@@ -345,7 +414,7 @@ if __name__ == "__main__":
 
     # اختيار المودل مرة واحدة في البداية
     model_info = select_model()
-    model, scaler, encoder = load_model_artifacts(model_info)
+    model, scaler, encoder, features_to_use = load_model_artifacts(model_info)
 
     if model is None:
         sys.exit(1)
@@ -356,7 +425,7 @@ if __name__ == "__main__":
         if tickers and len(tickers) > 0:
             process_prediction(
                 tickers, weights,
-                model, scaler, encoder, model_info
+                model, scaler, encoder, features_to_use, model_info
             )
 
         again = input("Analyze another portfolio? (y/n): ").strip().lower()
