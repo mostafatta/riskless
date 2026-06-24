@@ -374,6 +374,16 @@ def process_prediction(tickers, weights, model, scaler, encoder, features_to_use
         print(f"  {'Market Cap Score':<30}{port_cap_score:>12.2f}")
         print(f"  {'Sector Volatility':<30}{weighted_sector_vol*100:>11.2f}%")
         print(f"  {'Sector Beta':<30}{weighted_sector_beta:>12.2f}")
+        
+        # New features
+        print(f"  {'Downside Volatility':<30}{port_downside_vol*100:>11.2f}%")
+        print(f"  {'Max Drawdown':<30}{port_max_drawdown*100:>11.2f}%")
+        print(f"  {'Amihud Illiquidity':<30}{port_amihud:>12.6f}")
+        print(f"  {'Debt to Equity':<30}{port_debt_to_equity:>12.3f}")
+        print(f"  {'Revenue Growth Vol':<30}{port_revenue_growth_vol:>12.3f}")
+        print(f"  {'Current Ratio':<30}{port_current_ratio:>12.3f}")
+        print(f"  {'Interest Coverage':<30}{port_interest_coverage:>12.3f}")
+        print(f"  {'Return on Assets (ROA)':<30}{port_roa:>12.3f}")
 
         print(f"\n  {'─'*42}")
         print(f"  {'Risk Score (Math)':<30}{score_result['Final_Risk_Score']:>12}")
